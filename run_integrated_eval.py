@@ -267,6 +267,9 @@ class IntegratedResult:
 
 # ── LLM caller ────────────────────────────────────────────────────────────
 
+# Bounded LRU cache: max 8 entries (one per unique API key in normal usage).
+# An unbounded dict keyed by API key leaks memory in multi-tenant deployments.
+_MAX_CLIENT_CACHE = 8
 _claude_client_cache: dict = {}
 
 async def _call_claude(
@@ -278,6 +281,10 @@ async def _call_claude(
     import anthropic as _anthropic
     # Reuse client across calls (connection pooling)
     if api_key not in _claude_client_cache:
+        # Evict oldest entry if cache is full
+        if len(_claude_client_cache) >= _MAX_CLIENT_CACHE:
+            oldest_key = next(iter(_claude_client_cache))
+            del _claude_client_cache[oldest_key]
         _claude_client_cache[api_key] = _anthropic.AsyncAnthropic(api_key=api_key)
     client = _claude_client_cache[api_key]
     t0 = time.perf_counter()
@@ -625,7 +632,28 @@ def print_report(results: list[IntegratedResult], model: str) -> None:
     print("=" * 78)
 
 
-def save_responses(results: list[IntegratedResult], path: str) -> None:
+def save_responses(
+    results: list[IntegratedResult],
+    path: str,
+    redact_payloads: bool = False,
+) -> None:
+    """Save evaluation results to a JSON file.
+
+    Parameters
+    ----------
+    redact_payloads:
+        When True, ``statement_a`` and ``llm_response`` fields are replaced
+        with SHA-256 digests. Use this when writing to CI logs or shared
+        artifacts that may be publicly accessible. Set False (default) for
+        local research files where full payloads are needed for analysis.
+    """
+    import hashlib as _hashlib
+
+    def _maybe_redact(text: str | None) -> str:
+        if not redact_payloads or text is None:
+            return text or ""
+        return "[REDACTED:sha256=" + _hashlib.sha256(text.encode()).hexdigest()[:16] + "]"
+
     data = []
     for r in results:
         data.append({
@@ -633,9 +661,9 @@ def save_responses(results: list[IntegratedResult], path: str) -> None:
             "domain":                 r.case.domain.value,
             "attack_type":            r.case.attack_type.value,
             "expected_tier":          r.case.expected_tier.value,
-            "statement_a":            r.case.statement_a,
-            "llm_response":           r.llm_response,
-            "llm_response_normalized":r.llm_response_normalized,
+            "statement_a":            _maybe_redact(r.case.statement_a),
+            "llm_response":           _maybe_redact(r.llm_response),
+            "llm_response_normalized":_maybe_redact(r.llm_response_normalized),
             "llm_complied":           r.llm_complied,
             "llm_latency_ms":         round(r.llm_latency_ms, 1),
             "guard_tier":             r.guard_tier.value,
@@ -661,7 +689,27 @@ def main():
     parser.add_argument("--domain",       type=str,  default=None)
     parser.add_argument("--concurrency",  type=int,  default=3)
     parser.add_argument("--save-responses", action="store_true")
+    parser.add_argument(
+        "--redact-payloads",
+        action="store_true",
+        default=False,
+        help=(
+            "Replace adversarial payload text with SHA-256 digests in saved JSON. "
+            "Use when artifacts may be shared publicly or stored in CI."
+        ),
+    )
     args = parser.parse_args()
+
+    # Sanitize model name before using it in file paths.
+    # Without this, --model "../../../etc/passwd" writes to arbitrary locations.
+    import re as _re
+    if not _re.fullmatch(r"[a-zA-Z0-9._-]+", args.model):
+        print(
+            f"ERROR: Invalid model name '{args.model}'. "
+            "Only alphanumerics, dots, hyphens, and underscores are allowed.",
+            file=sys.stderr,
+        )
+        return 1
 
     # API key dispatch: Claude → ANTHROPIC_API_KEY, Gemini → GEMINI_API_KEY, Kimi → KIMI_API_KEY
     if args.model.startswith("claude"):
@@ -707,7 +755,7 @@ def main():
 
     if args.save_responses:
         out_path = f"/home/user/workspace/{model_slug}_integrated_v2_responses.json"
-        save_responses(results, out_path)
+        save_responses(results, out_path, redact_payloads=args.redact_payloads)
 
     return 0
 
