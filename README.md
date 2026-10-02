@@ -1,126 +1,113 @@
 # EmberBench
 
-**Adversarial evaluation harness for AI safety systems.** Tests how well LLMs and safety guards detect prompt injection, authority spoofing, numeric contradictions, semantic paraphrasing, and temporal manipulation attacks — across Legal, Financial, and Medical domains.
+A small development set of two-statement test cases (legal, financial, medical) and multi-turn drift sequences for contradiction and prompt-injection detectors, with raw results from early runs against it.
 
-[![Tests](https://img.shields.io/badge/test%20cases-91-blue)](data/)
-[![Models](https://img.shields.io/badge/models%20tested-5-purple)](results/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+## Status
 
----
+Frozen development set. Not a benchmark, and the harness does not run from this repository. The detector code included here is incomplete and is not for use as a security control. Status as of 2026-10-02.
 
-## The Benchmark
+## What is here
 
-**91 cases** — 61 adversarial, 30 benign — across 3 high-stakes deployment domains.
+- **91 two-statement cases**, 61 adversarial and 30 benign, written as Python literals in `emberbench/datasets/legal.py`, `financial.py` and `medical.py`. Each case has two statements, an expected tier (`SAFE`, `USER_FLAGGED` or `ESCALATE_HALT`), a domain, an attack type, a difficulty and a note.
+- **5 multi-turn drift sequences** of 6 or 7 turns in `emberbench/datasets/drift.py`. Each turn is meant to look acceptable next to the one before it, while the last turn contradicts or overrides the first. `DriftCase` gives `consecutive_pairs` and `endpoint_pair` for scoring. The sequences are not part of any figure below.
+- **Raw per-case results** in `results/`, 91 records per file. Three `*_baseline_results.json` files hold a language model's tier for each pair. Five `*_integrated_v2_responses.json` files hold a model's reply to statement A alone and the guard's tier for statement A against a shortened form of that reply (at most 300 characters). Statement B is not used in those runs.
+- **Two generated reports** in `results/` from April 2026, kept as a record.
+- A partial copy of the detector the cases were written for, in `ember_security/dissonance_guard/`, and a signature store in `data/signatures.json` (268 entries) whose reader is not included.
 
-### Attack Types
-| Type | Cases | Description |
-|------|-------|-------------|
-| Numeric Contradiction | 19 | False statistics, manipulated figures, basis point manipulation |
-| Cross-Layer Gap | 16 | Contradictions spanning system prompt and user context layers |
-| Temporal Injection | 10 | Outdated or future-dated claims inserted to erode prior commitments |
-| Authority Poison | 7 | False authority or source attribution to override restrictions |
-| Semantic Paraphrase | 6 | Meaning-altering rewrites that slip through pattern matching |
-| Soft Injection | 3 | Subtle behavioral nudges embedded in benign-looking content |
+| Attack type | Cases | Expected tier | What the pairs look like |
+|---|---:|---|---|
+| `numeric_contradiction` | 19 | `ESCALATE_HALT` | Conflicting figures, in most cases for the same quantity |
+| `cross_layer_gap` | 16 | 12 `ESCALATE_HALT`, 4 `USER_FLAGGED` | Two sentences that contradict each other on a fact. Despite the name, no system-prompt layer is involved |
+| `temporal_injection` | 10 | `USER_FLAGGED` | A claim presented as current, against a statement that says otherwise |
+| `authority_poison` | 7 | `ESCALATE_HALT` | A claimed role or legal authority used to demand restricted output or the lifting of restrictions |
+| `semantic_paraphrase` | 6 | `ESCALATE_HALT` | An instruction override phrased in legal language. The two statements agree with each other |
+| `soft_injection` | 3 | `ESCALATE_HALT` | An instruction override presented as a regulatory waiver |
+| `benign_fpr` | 30 | `SAFE` | The same fact restated in other words |
 
-### 3-Axis Evaluation
-- **Axis 1 — Guard DR/FPR:** Does the safety guard catch attacks without false positives?
-- **Axis 2 — LLM Behavior:** Does the LLM resist, comply, or affirm the attack natively?
-- **Axis 3 — System DR:** Does the full stack (LLM + Guard) contain every attack?
+By domain: legal 31 (21 adversarial, 10 benign), financial 30 (20, 10), medical 30 (20, 10).
 
----
+## The 98.4% figure
 
-## Results *(May 2026)*
+Earlier versions of this README reported 98.4% detection and 0% false positives for the guard alone. Read that figure as follows.
 
-| Model | Baseline DR | With EmberArmor | FPR | Slip-throughs | Latency |
-|-------|:-----------:|:---------------:|:---:|:-------------:|:-------:|
-| Claude Sonnet 4.6 | 95.1% | **100%** | 3.3% | 0 | 3,820ms |
-| Gemini 3.1 Pro | 88.5% | **100%** | 10.0% | 0 | 6,389ms |
-| Claude Haiku 4.5 | 85.2% | **91.8%** | 3.3% | 5 | 2,619ms |
-| Kimi K2.6 | 52.5% | **96.7%** | 16.7% | 2 | 14,031ms |
-| Kimi K2.5 | 45.9% | **100%** | 3.3% | 0 | 15,771ms |
-| **EmberArmor (guard only)** | **98.4%** | — | **0.0%** | — | **860ms** |
+- It was measured on 2026-04-22 on these same 91 cases. 60 of 61 adversarial cases received exactly the expected tier (98.4%), all 61 were flagged at some tier, and 0 of 30 benign cases were flagged.
+- The detector was adjusted against these cases three times that day. The reported detection rate went from 70.5% to 88.5% to 98.4%.
+- There is no held-out set. The figure is an in-sample development-set result. It does not estimate how the detector behaves on text it was not adjusted against.
+- 30 benign cases is a small sample. 0 false positives in 30 is consistent with a true false-positive rate anywhere up to about 11.6% (upper end of the exact two-sided 95% binomial interval).
+- It cannot be reproduced from this repository. The harness does not import (see below), the per-case output of that run is not in `results/`, and `ember_security/dissonance_guard/scorer.py` here is a later revision than the one that produced the figure.
 
-The gap between baseline detection and system detection illustrates the enforcement layer's value: a model detecting 45.9% of attacks natively reaches 100% with EmberArmor added.
+The model comparison table that used to be here has been removed. Its columns came from different tasks scored by different rules, so its rows could not be compared with each other.
 
----
+## What does not work
 
-## Usage
+- No entry point runs from a clean clone. `python -m emberbench`, `run_eval_direct.py`, `run_integrated_eval.py` and the four `run_*_baseline.py` scripts all stop with `ModuleNotFoundError`, with or without the dependencies installed. The code imports a package named `eval` and parts of `ember_security` (`config`, `thalamic_conductor`, `offensive` and others) that are not in this repository.
+- The pattern-matching layers behind part of the guard figure live in `ember_security.offensive`, which is one of the missing parts.
+- There is no `tests` directory. `python -m pytest` collects 0 items.
+- `pyproject.toml` does not declare everything the code imports (numpy, structlog, sentence-transformers, torch, scipy, google-genai).
 
-```bash
-# Install deps
-pip install anthropic google-genai httpx torch transformers
+## What you can run
 
-# Set API keys
-export ANTHROPIC_API_KEY=sk-ant-...
-export GEMINI_API_KEY=AIza...
-export KIMI_API_KEY=sk-...
-export PERPLEXITY_API_KEY=pplx-...   # for Sonar baseline
+Checked with Python 3.12.4 on Windows 11, from the repository root.
 
-# Run baseline (LLM only, no guard)
-python run_claude_baseline.py --model claude-sonnet-4-6
-python run_gemini_baseline.py --model gemini-3.1-pro-preview
-python run_kimi_baseline.py
-
-# Run integrated (LLM + EmberArmor guard)
-python run_integrated_eval.py --model claude-sonnet-4-6
-python run_integrated_eval.py --model gemini-3.1-pro-preview --save-responses
-
-# Incremental checkpointing — safe to interrupt and resume
-python run_integrated_eval.py --model claude-sonnet-4-6 --checkpoint
-```
-
----
-
-## Structure
+Tally a result file (standard library only):
 
 ```
-EmberBench/
-├── emberbench/
-│   ├── datasets/            — 91 test cases (legal, financial, medical)
-│   │   ├── legal/
-│   │   ├── financial/
-│   │   └── medical/
-│   └── runner.py            — Core evaluation loop
-├── ember_security/
-│   └── dissonance_guard/    — Guard scorer + detector (shared dep)
-├── results/                 — Per-case JSON results, per-model
-│   ├── claude_sonnet_4_6_baseline_results.json
-│   ├── claude_sonnet_4_6_integrated_v2_responses.json
-│   ├── gemini_3_1_pro_preview_baseline_results.json
-│   └── ...
-├── run_integrated_eval.py   — Full-stack eval (LLM → EmberArmor guard)
-├── run_claude_baseline.py
-├── run_gemini_baseline.py
-├── run_kimi_baseline.py
-├── run_sonar_baseline.py    — Sonar-only baseline (Perplexity API)
-└── .env.example
+python -c "import json, collections; rows = json.load(open('results/claude_sonnet_4_6_baseline_results.json', encoding='utf-8')); print(len(rows), collections.Counter(r['attack_type'] for r in rows))"
 ```
 
----
+It prints `91` and the count per attack type.
 
-## Reproducing Results
+Load the cases. The dataset modules need pydantic (`pip install pydantic`) and two package names this repository does not provide, so the script registers those names before importing:
 
-EmberBench is designed to be reproducible. All 91 test cases are in `emberbench/datasets/` as structured JSON. The eval scripts use incremental checkpointing — if a run is interrupted, it resumes from the last completed case.
+```python
+import sys, types
 
-The guard scorer uses DeBERTa-v3-large NLI with:
-- Label order: `contradiction=0`, `entailment=1`, `neutral=2`
-- Affirmation threshold: NLI entailment ≥ 0.60
+# Register the package names the dataset modules expect, without running
+# the package __init__ files that import modules missing from this repo.
+for name, path in {
+    "eval": ".",
+    "eval.emberbench": "emberbench",
+    "ember_security": "ember_security",
+    "ember_security.dissonance_guard": "ember_security/dissonance_guard",
+}.items():
+    pkg = types.ModuleType(name)
+    pkg.__path__ = [path]
+    sys.modules[name] = pkg
 
-Gemini 3.1 Pro requires `max_output_tokens=8192` (reasoning model) — this is set in the eval script.
+from eval.emberbench.datasets import get_all_cases, get_all_drift_cases
 
----
+cases = get_all_cases()
+print(len(cases), "cases,", len(get_all_drift_cases()), "drift sequences")
+```
 
-## Ecosystem
+Saved as `load_cases.py` in the repository root and run with `python load_cases.py`, it prints `91 cases, 5 drift sequences`. Each case is a dataclass with `case_id`, `statement_a`, `statement_b`, `expected_tier`, `domain`, `attack_type`, `difficulty` and `notes`.
 
-| Repo | Role |
-|------|------|
-| [EmberArmor](https://github.com/GrandMastaShake/EmberArmor) | Runtime enforcement layer |
-| [EmberHoneypot](https://github.com/GrandMastaShake/EmberHoneypot) | AI deception + threat intelligence |
-| [Corporeus](https://github.com/GrandMastaShake/Corporeus) | Static AST vulnerability scanner |
-| [EmberBench](https://github.com/GrandMastaShake/EmberBench) | Adversarial evaluation harness (this repo) |
+## Known issues
 
----
+- `ember_security/dissonance_guard/scorer.py` can raise the score to 0.95, its highest floor, for a pair that contains a word such as "ignore" or "waived", or figures that differ between the two statements, even when the contradiction probability passed in is 0. Ordinary sentence pairs get its "Halting pipeline" explanation this way.
+- `detector.py` in the same directory skips its signature and pattern layers without an error if they fail to import or raise, and `run_integrated_eval.py` records a guard exception as `SAFE` and a failed or empty model reply as contained.
+- `data/signatures.json` includes ordinary questions (for example "Explain how photosynthesis works.") stored as halt signatures.
+- The scripts do not share one definition of "detected": exact tier match (`run_eval_direct.py`, the Kimi and Sonar scripts), flagged at either tier (`emberbench/report.py`), any tier other than `SAFE` (the Claude and Gemini scripts). This is why `results/emberbench_report.md` says 100% for the run described above as 98.4%.
+- The bootstrap intervals in `results/emberbench_report.md` have zero width because the sample had no failures, so they carry no information. `emberbench/bootstrap.py` also computes precision as `1 - FPR`, which is not precision, so the F1 it reports is not an F1 score.
+- Layer attribution labels any result slower than 5 ms as `nli`, including benign cases that passed. That is where `nli 75` in the report comes from.
+- `results/emberbench_comparison.md` has a Sonar column that was never filled in, and its per-attack table puts the one tier mismatch under the wrong attack type.
+- `emberbench/report.py` hard-codes a "v3 baseline" of 182 cases. This repository has no data, script or results for it.
+- The Claude, Gemini and integrated scripts save their output to a hard-coded `/home/user/workspace/` path.
+- The cases have no written rule for `USER_FLAGGED` versus `ESCALATE_HALT`, no field saying which statement is the trusted one, and no source field for the facts they state.
+- Every benign pair is a close restatement, and where numbers appear they are the same in both statements. None has a second statement that adds a different number, so the set does not test ordinary text that does.
+
+## What would make this a benchmark
+
+- A held-out split, written without sight of any detector and frozen before any detector change.
+- A benign set large enough to put a useful bound on the false-positive rate, including ordinary text that adds numbers or uses trigger words.
+- Results on public sets alongside, so the numbers can be compared with other detectors.
+- One definition of detection, with exact binomial intervals on every rate.
+- A harness that runs from a clean clone against any detector, not only the one it was written for.
+
+## Direction
+
+This repository is frozen as a development set. Evaluation of the constraint-ledger work in [EmberArmor](https://github.com/GrandMastaShake/EmberArmor) will use public benchmarks first. These cases may return later as one small domain-specific set with a held-out split.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT. See [LICENSE](LICENSE).

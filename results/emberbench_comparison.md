@@ -1,3 +1,6 @@
+> Note (2026-10-02): the figures below are in-sample development-set results. The detector was adjusted against these same 91 cases before these runs, and there is no held-out set.
+> They do not estimate performance on unseen inputs. See the README for current status.
+
 # EmberBench Comparison Report
 
 _Generated: 2026-04-23_
